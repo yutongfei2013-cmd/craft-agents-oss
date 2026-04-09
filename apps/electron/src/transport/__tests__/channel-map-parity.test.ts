@@ -20,10 +20,11 @@ type ApiToChannelMapKeys = Exclude<
   | 'onTransportConnectionStateChanged'
   | 'reconnectTransport'
   | 'isChannelAvailable'
-  | 'getSystemWarnings' // reads env var set at startup — no IPC needed
-  | 'relaunchApp' // direct IPC to main process — not through WS RPC
-  | 'removeWorkspace' // direct IPC to main process — modifies local config
-  | 'invokeOnServer' // direct IPC to main process — cross-server RPC
+  | 'getSystemWarnings' // reads env var set at startup; no IPC needed
+  | 'relaunchApp' // direct IPC to main process; not through WS RPC
+  | 'removeWorkspace' // direct IPC to main process; modifies local config
+  | 'openWorkspaceDirectory' // direct IPC to main process; opens local workspace root
+  | 'invokeOnServer' // direct IPC to main process; cross-server RPC
 > | BrowserPaneKeys
 type ChannelMapKeys = keyof typeof CHANNEL_MAP & string
 

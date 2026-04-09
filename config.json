@@ -1,0 +1,21 @@
+{
+  "id": "ws_601c3176",
+  "name": "craft-agents-oss",
+  "slug": "craft-agents-oss",
+  "defaults": {
+    "permissionMode": "safe",
+    "cyclablePermissionModes": [
+      "safe",
+      "allow-all"
+    ],
+    "enabledSourceSlugs": [],
+    "defaultLlmConnection": "pi-api-key-2",
+    "model": "gpt-5.4",
+    "thinkingLevel": "high"
+  },
+  "localMcpServers": {
+    "enabled": true
+  },
+  "createdAt": 1775724088842,
+  "updatedAt": 1775724353614
+}

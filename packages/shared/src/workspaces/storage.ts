@@ -14,6 +14,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  renameSync,
 } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -34,6 +35,9 @@ import type {
 
 const CONFIG_DIR = join(homedir(), '.craft-agent');
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
+
+/** Name of the hidden data directory inside workspace roots */
+const WORKSPACE_DATA_DIR = '.craft-agent';
 
 // ============================================================
 // Path Utilities
@@ -65,11 +69,20 @@ export function getWorkspacePath(workspaceId: string): string {
 }
 
 /**
+ * Get path to workspace data directory ({rootPath}/.craft-agent/)
+ * All workspace-managed files live here to keep the project directory clean.
+ * @param rootPath - Absolute path to workspace root folder
+ */
+export function getWorkspaceDataDir(rootPath: string): string {
+  return join(rootPath, WORKSPACE_DATA_DIR);
+}
+
+/**
  * Get path to workspace sources directory
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSourcesPath(rootPath: string): string {
-  return join(rootPath, 'sources');
+  return join(getWorkspaceDataDir(rootPath), 'sources');
 }
 
 /**
@@ -77,7 +90,7 @@ export function getWorkspaceSourcesPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSessionsPath(rootPath: string): string {
-  return join(rootPath, 'sessions');
+  return join(getWorkspaceDataDir(rootPath), 'sessions');
 }
 
 /**
@@ -85,7 +98,7 @@ export function getWorkspaceSessionsPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
-  return join(rootPath, 'skills');
+  return join(getWorkspaceDataDir(rootPath), 'skills');
 }
 
 // ============================================================
@@ -97,7 +110,8 @@ export function getWorkspaceSkillsPath(rootPath: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
-  const configPath = join(rootPath, 'config.json');
+  migrateToDataDir(rootPath);
+  const configPath = join(getWorkspaceDataDir(rootPath), 'config.json');
   if (!existsSync(configPath)) return null;
 
   try {
@@ -142,8 +156,8 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
-  if (!existsSync(rootPath)) {
-    mkdirSync(rootPath, { recursive: true });
+  if (!existsSync(getWorkspaceDataDir(rootPath))) {
+    mkdirSync(getWorkspaceDataDir(rootPath), { recursive: true });
   }
 
   // Convert paths to portable form for cross-machine compatibility
@@ -160,7 +174,7 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
   }
 
   // Use atomic write to prevent corruption on crash/interrupt
-  atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(storageConfig, null, 2));
+  atomicWriteFileSync(join(getWorkspaceDataDir(rootPath), 'config.json'), JSON.stringify(storageConfig, null, 2));
 }
 
 // ============================================================
@@ -325,7 +339,7 @@ export function createWorkspaceAtPath(
   };
 
   // Create workspace directory structure
-  mkdirSync(rootPath, { recursive: true });
+  mkdirSync(getWorkspaceDataDir(rootPath), { recursive: true });
   mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
   mkdirSync(getWorkspaceSessionsPath(rootPath), { recursive: true });
   mkdirSync(getWorkspaceSkillsPath(rootPath), { recursive: true });
@@ -366,7 +380,7 @@ export function deleteWorkspaceFolder(rootPath: string): boolean {
  * @param rootPath - Absolute path to check
  */
 export function isValidWorkspace(rootPath: string): boolean {
-  return existsSync(join(rootPath, 'config.json'));
+  return existsSync(join(getWorkspaceDataDir(rootPath), 'config.json'));
 }
 
 /**
@@ -510,7 +524,7 @@ export function isLocalMcpEnabled(rootPath: string): boolean {
  * @param workspaceName - Display name for the workspace (used in plugin name)
  */
 export function ensurePluginManifest(rootPath: string, workspaceName: string): void {
-  const pluginDir = join(rootPath, '.claude-plugin');
+  const pluginDir = join(getWorkspaceDataDir(rootPath), '.claude-plugin');
   const manifestPath = join(pluginDir, 'plugin.json');
 
   if (existsSync(manifestPath)) return;
@@ -529,4 +543,54 @@ export function ensurePluginManifest(rootPath: string, workspaceName: string): v
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 }
 
-export { CONFIG_DIR, DEFAULT_WORKSPACES_DIR };
+// ============================================================
+// Migration (old layout → .craft-agent/ layout)
+// ============================================================
+
+/** Items to migrate from workspace root into .craft-agent/ */
+const MIGRATABLE_ITEMS = [
+  'config.json',
+  'permissions.json',
+  'automations.json',
+  'automations-history.jsonl',
+  'automations-retry-queue.jsonl',
+  'sessions',
+  'sources',
+  'skills',
+  'statuses',
+  'labels',
+  '.claude-plugin',
+];
+
+/**
+ * Migrate workspace from old flat layout to .craft-agent/ subdirectory layout.
+ * Called automatically when loading a workspace config.
+ * No-op if already migrated or if old layout doesn't exist.
+ */
+function migrateToDataDir(rootPath: string): void {
+  const dataDir = getWorkspaceDataDir(rootPath);
+  const oldConfigPath = join(rootPath, 'config.json');
+  const newConfigPath = join(dataDir, 'config.json');
+
+  // Skip if old layout doesn't exist or new layout already exists
+  if (!existsSync(oldConfigPath) || existsSync(newConfigPath)) return;
+
+  // Create data directory
+  mkdirSync(dataDir, { recursive: true });
+
+  // Move each item
+  for (const item of MIGRATABLE_ITEMS) {
+    const oldPath = join(rootPath, item);
+    const newPath = join(dataDir, item);
+    if (existsSync(oldPath) && !existsSync(newPath)) {
+      try {
+        renameSync(oldPath, newPath);
+      } catch {
+        // Cross-device move not supported by rename — skip silently
+        // (rare edge case: workspace root and data dir on different mounts)
+      }
+    }
+  }
+}
+
+export { CONFIG_DIR, DEFAULT_WORKSPACES_DIR, WORKSPACE_DATA_DIR };

@@ -18,6 +18,7 @@ import { debug } from '../utils/debug.ts';
 import { readJsonFileSync, safeJsonParse } from '../utils/files.ts';
 import { CONFIG_DIR } from '../config/paths.ts';
 import { getBundledAssetsDir } from '../utils/paths.ts';
+import { getWorkspaceDataDir } from '../workspaces/storage.ts';
 import { getSourcePath } from '../sources/storage.ts';
 import { isValidPermissionsFile } from '../config/validators.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
@@ -435,7 +436,7 @@ export function validatePermissionsConfig(config: PermissionsConfigFile): string
  * Get path to workspace permissions.json
  */
 export function getWorkspacePermissionsPath(workspaceRootPath: string): string {
-  return join(workspaceRootPath, 'permissions.json');
+  return join(getWorkspaceDataDir(workspaceRootPath), 'permissions.json');
 }
 
 /**

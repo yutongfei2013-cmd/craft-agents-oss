@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useState, useCallback, useRef } from "react"
-import { Check, FolderPlus, ExternalLink, ChevronDown, Cloud, CloudOff, Trash2 } from "lucide-react"
+import { Check, FolderOpen, FolderPlus, ExternalLink, ChevronDown, Cloud, CloudOff, Trash2 } from "lucide-react"
 import { AnimatePresence } from "motion/react"
 import { useSetAtom } from "jotai"
 import { toast } from "sonner"
@@ -146,6 +146,22 @@ export function WorkspaceSwitcher({
       onWorkspaceRemoved?.()
     }
   }, [activeWorkspaceId, onWorkspaceRemoved])
+
+  const handleOpenWorkspaceDirectory = useCallback(async (workspace: Workspace) => {
+    if (workspace.remoteServer) {
+      toast.error('Remote workspace does not have a local project directory')
+      return
+    }
+
+    try {
+      await window.electronAPI.openWorkspaceDirectory(workspace.id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      toast.error('Failed to open workspace directory', {
+        description: message,
+      })
+    }
+  }, [])
 
   const handleCloseCreationScreen = useCallback(() => {
     setShowCreationScreen(false)
@@ -295,6 +311,18 @@ export function WorkspaceSwitcher({
                       title="Remove workspace"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {!workspace.remoteServer && (
+                    <button
+                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-foreground/10 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleOpenWorkspaceDirectory(workspace)
+                      }}
+                      title="Open workspace directory"
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
                     </button>
                   )}
                   {activeWorkspaceId !== workspace.id && !disconnected && (

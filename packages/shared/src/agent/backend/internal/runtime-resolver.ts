@@ -54,6 +54,22 @@ function resolveUpwards(base: string, relativePath: string, maxLevels = 4): stri
   return undefined;
 }
 
+function resolveFirstExistingPathFromCommand(command: string, binaryName: string): string | undefined {
+  try {
+    const rawOutput = execFileSync(command, [binaryName], { encoding: 'utf-8' }).trim();
+    if (!rawOutput) return undefined;
+
+    const candidates = rawOutput
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    return candidates.find(candidate => existsSync(candidate));
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): string | undefined {
   const bunBinary = process.platform === 'win32' ? 'bun.exe' : 'bun';
   const bunBasePath = process.platform === 'win32'
@@ -66,11 +82,9 @@ function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): stri
   // Packaged apps must ship their own bundled bun — never resolve from PATH
   // to avoid picking up an incompatible system install.
   if (!hostRuntime.isPackaged) {
-    try {
-      const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-      const systemBun = execFileSync(whichCmd, ['bun'], { encoding: 'utf-8' }).trim();
-      if (systemBun && existsSync(systemBun)) return systemBun;
-    } catch { /* system bun not found */ }
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const systemBun = resolveFirstExistingPathFromCommand(whichCmd, 'bun');
+    if (systemBun) return systemBun;
   }
   return undefined;
 }
@@ -179,11 +193,9 @@ function resolveRipgrepPath(hostRuntime: BackendHostRuntimeContext): string | un
   // Packaged apps must use vendored binary only — never resolve from PATH
   // to avoid picking up an incompatible system install.
   if (!hostRuntime.isPackaged) {
-    try {
-      const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-      const systemRg = execFileSync(whichCmd, ['rg'], { encoding: 'utf-8' }).trim();
-      if (systemRg && existsSync(systemRg)) return systemRg;
-    } catch { /* system rg not found */ }
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const systemRg = resolveFirstExistingPathFromCommand(whichCmd, 'rg');
+    if (systemRg) return systemRg;
   }
 
   return undefined;

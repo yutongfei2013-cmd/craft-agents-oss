@@ -307,7 +307,7 @@ export type SystemPromptPreset = 'default' | 'mini';
  */
 export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
   const workspaceContext = workspaceRootPath
-    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Statuses: \`statuses/config.json\`\n- Labels: \`labels/config.json\`\n- Permissions: \`permissions.json\`\n`
+    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}/.craft-agent\`\n- Statuses: \`statuses/config.json\`\n- Labels: \`labels/config.json\`\n- Permissions: \`permissions.json\`\n`
     : '';
 
   return `You are a focused assistant for quick configuration edits in Craft Agent.

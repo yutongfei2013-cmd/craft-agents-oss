@@ -24,6 +24,7 @@ import {
 } from '../utils/icon.ts';
 import { migrateStatusColors } from '../colors/migrate.ts';
 import { debug } from '../utils/debug.ts';
+import { getWorkspaceDataDir } from '../workspaces/storage.ts';
 
 const STATUS_CONFIG_DIR = 'statuses';
 const STATUS_CONFIG_FILE = 'statuses/config.json';
@@ -95,7 +96,7 @@ export function getDefaultStatusConfig(): WorkspaceStatusConfig {
  * Creates missing icon files from embedded SVG strings
  */
 export function ensureDefaultIconFiles(workspaceRootPath: string): void {
-  const iconsDir = join(workspaceRootPath, STATUS_ICONS_DIR);
+  const iconsDir = join(getWorkspaceDataDir(workspaceRootPath), STATUS_ICONS_DIR);
 
   // Create icons directory if missing
   if (!existsSync(iconsDir)) {
@@ -137,7 +138,7 @@ export function loadStatusConfig(workspaceRootPath: string): WorkspaceStatusConf
   // Ensure default icon files exist (self-healing)
   ensureDefaultIconFiles(workspaceRootPath);
 
-  const configPath = join(workspaceRootPath, STATUS_CONFIG_FILE);
+  const configPath = join(getWorkspaceDataDir(workspaceRootPath), STATUS_CONFIG_FILE);
 
   // Return defaults if config doesn't exist
   if (!existsSync(configPath)) {
@@ -175,8 +176,8 @@ export function saveStatusConfig(
   workspaceRootPath: string,
   config: WorkspaceStatusConfig
 ): void {
-  const statusDir = join(workspaceRootPath, STATUS_CONFIG_DIR);
-  const configPath = join(workspaceRootPath, STATUS_CONFIG_FILE);
+  const statusDir = join(getWorkspaceDataDir(workspaceRootPath), STATUS_CONFIG_DIR);
+  const configPath = join(getWorkspaceDataDir(workspaceRootPath), STATUS_CONFIG_FILE);
 
   // Create status directory if missing
   if (!existsSync(statusDir)) {
@@ -248,7 +249,7 @@ export function findStatusIcon(
   workspaceRootPath: string,
   statusId: string
 ): string | undefined {
-  const iconsDir = join(workspaceRootPath, STATUS_ICONS_DIR);
+  const iconsDir = join(getWorkspaceDataDir(workspaceRootPath), STATUS_ICONS_DIR);
 
   for (const ext of ICON_EXTENSIONS) {
     const iconPath = join(iconsDir, `${statusId}${ext}`);
@@ -269,7 +270,7 @@ export async function downloadStatusIcon(
   statusId: string,
   iconUrl: string
 ): Promise<string | null> {
-  const iconsDir = join(workspaceRootPath, STATUS_ICONS_DIR);
+  const iconsDir = join(getWorkspaceDataDir(workspaceRootPath), STATUS_ICONS_DIR);
 
   // Ensure icons directory exists
   if (!existsSync(iconsDir)) {

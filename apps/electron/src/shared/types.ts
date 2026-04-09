@@ -357,6 +357,7 @@ export interface ElectronAPI {
   openUrl(url: string): Promise<void>
   openFile(path: string): Promise<void>
   showInFolder(path: string): Promise<void>
+  openWorkspaceDirectory(workspaceId: string): Promise<void>
 
   // Menu event listeners
   onMenuNewChat(callback: () => void): () => void

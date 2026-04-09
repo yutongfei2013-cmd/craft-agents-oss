@@ -9,7 +9,7 @@
  * - ~/.craft-agent/preferences.json - User preferences
  * - ~/.craft-agent/theme.json - App-level theme overrides
  * - ~/.craft-agent/themes/*.json - Preset theme files (app-level)
- * - ~/.craft-agent/workspaces/{slug}/ - Workspace directory (recursive)
+ * - ~/.craft-agent/workspaces/{slug}/.craft-agent/ - Workspace data directory (recursive)
  *   - sources/{slug}/config.json, guide.md, permissions.json
  *   - skills/{slug}/SKILL.md, icon.*
  *   - sessions/{id}/session.jsonl (header metadata only)
@@ -41,7 +41,7 @@ import {
   downloadSourceIcon,
 } from '../sources/storage.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
-import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts';
+import { getWorkspacePath, getWorkspaceDataDir, getWorkspaceSourcesPath, getWorkspaceSkillsPath } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
 import {
@@ -240,9 +240,10 @@ export class ConfigWatcher {
     this.isRunning = true;
     debug('[ConfigWatcher] Starting for workspace:', this.workspaceId);
 
-    // Ensure workspace directory exists
-    if (!existsSync(this.workspaceDir)) {
-      mkdirSync(this.workspaceDir, { recursive: true });
+    // Ensure workspace data directory exists
+    const dataDir = getWorkspaceDataDir(this.workspaceDir);
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
     }
     span.mark('ensureDir');
 
@@ -364,12 +365,13 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch workspace directory recursively
+   * Watch workspace data directory recursively
    */
   private watchWorkspaceDir(): void {
-    debug('[ConfigWatcher] Setting up workspace watcher for:', this.workspaceDir);
+    const dataDir = getWorkspaceDataDir(this.workspaceDir);
+    debug('[ConfigWatcher] Setting up workspace watcher for:', dataDir);
     try {
-      const watcher = watch(this.workspaceDir, { recursive: true }, (eventType, filename) => {
+      const watcher = watch(dataDir, { recursive: true }, (eventType, filename) => {
         if (!filename) return;
 
         // Normalize path separators
@@ -378,7 +380,7 @@ export class ConfigWatcher {
       });
 
       this.watchers.push(watcher);
-      debug('[ConfigWatcher] Watching workspace recursively:', this.workspaceDir);
+      debug('[ConfigWatcher] Watching workspace recursively:', dataDir);
     } catch (error) {
       debug('[ConfigWatcher] Error watching workspace directory:', error);
     }
@@ -930,7 +932,7 @@ export class ConfigWatcher {
    * made by other instances, scripts, or manual edits.
    */
   private handleSessionMetadataChange(sessionId: string): void {
-    const sessionFile = join(this.workspaceDir, 'sessions', sessionId, 'session.jsonl');
+    const sessionFile = join(getWorkspaceDataDir(this.workspaceDir), 'sessions', sessionId, 'session.jsonl');
 
     if (!existsSync(sessionFile)) {
       return;

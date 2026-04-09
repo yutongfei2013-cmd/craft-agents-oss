@@ -675,6 +675,21 @@ app.whenReady().then(async () => {
         return remove(workspaceId)
       })
 
+      ipcMain.handle('workspace:openDirectory', async (_event, workspaceId: string) => {
+        const workspace = getWorkspaceByNameOrId(workspaceId)
+        if (!workspace) {
+          throw new Error(`Workspace not found: ${workspaceId}`)
+        }
+        if (workspace.remoteServer) {
+          throw new Error('Remote workspace does not have a local project directory')
+        }
+
+        const result = await shell.openPath(workspace.rootPath)
+        if (result) {
+          throw new Error(result)
+        }
+      })
+
       // Cross-server RPC — invoke a channel on an arbitrary remote server
       ipcMain.handle('server:invokeOnServer', async (_event, url: string, token: string, channel: string, ...args: unknown[]) => {
         const { connectToRemote } = await import('./handlers/workspace')

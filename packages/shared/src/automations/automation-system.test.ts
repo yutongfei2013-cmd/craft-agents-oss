@@ -3,17 +3,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AutomationSystem, type SessionMetadataSnapshot } from './automation-system.ts';
 import { AUTOMATIONS_CONFIG_FILE, AUTOMATIONS_HISTORY_FILE } from './constants.ts';
+import { getWorkspaceDataDir } from '../workspaces/storage.ts';
 
 describe('AutomationSystem', () => {
   let tempDir: string;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'automation-system-test-'));
+    mkdirSync(getWorkspaceDataDir(tempDir), { recursive: true });
   });
 
   afterEach(() => {
@@ -34,7 +36,7 @@ describe('AutomationSystem', () => {
     });
 
     it('should load automations.json if present', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             {
@@ -57,7 +59,7 @@ describe('AutomationSystem', () => {
     });
 
     it('should handle invalid automations.json gracefully', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), 'invalid json');
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), 'invalid json');
 
       const system = new AutomationSystem({
         workspaceRootPath: tempDir,
@@ -70,7 +72,7 @@ describe('AutomationSystem', () => {
     });
 
     it('should reject semantically invalid conditions at load time', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             {
@@ -102,7 +104,7 @@ describe('AutomationSystem', () => {
       expect(system.getConfig()).toEqual({ automations: {} });
 
       // Create automations.json
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             {
@@ -128,7 +130,7 @@ describe('AutomationSystem', () => {
       });
 
       // Invalid JSON structure (actions must have at least one action)
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             { matcher: 'test', actions: 'not-an-array' }, // Invalid: actions should be an array
@@ -149,7 +151,7 @@ describe('AutomationSystem', () => {
         workspaceId: 'test-workspace',
       });
 
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             {
@@ -174,7 +176,7 @@ describe('AutomationSystem', () => {
       });
 
       // Unknown events are filtered out with a warning, not an error
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           UnknownEvent: [
             { matcher: 'test', actions: [{ type: 'prompt', prompt: 'echo test' }] },
@@ -192,7 +194,7 @@ describe('AutomationSystem', () => {
 
   describe('getMatchersForEvent', () => {
     it('should return matchers for configured events', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           LabelAdd: [
             { matcher: 'test1', actions: [{ type: 'prompt', prompt: 'echo 1' }] },
@@ -429,7 +431,7 @@ describe('AutomationSystem', () => {
 
   describe('executeAgentEvent', () => {
     it('should match agent events when matcher and conditions pass', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           PreToolUse: [
             {
@@ -457,7 +459,7 @@ describe('AutomationSystem', () => {
     });
 
     it('should not match agent events when conditions fail', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           PreToolUse: [
             {
@@ -487,7 +489,7 @@ describe('AutomationSystem', () => {
 
   describe('buildSdkHooks', () => {
     it('should return empty object (command execution removed)', async () => {
-      writeFileSync(join(tempDir, AUTOMATIONS_CONFIG_FILE), JSON.stringify({
+      writeFileSync(join(getWorkspaceDataDir(tempDir), AUTOMATIONS_CONFIG_FILE), JSON.stringify({
         automations: {
           PreToolUse: [
             { matcher: 'Bash', actions: [{ type: 'prompt', prompt: 'check this' }] },

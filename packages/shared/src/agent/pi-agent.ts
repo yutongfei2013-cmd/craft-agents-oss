@@ -18,6 +18,7 @@ import { createInterface, type Interface as ReadlineInterface } from 'node:readl
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
+import { getWorkspaceDataDir } from '../workspaces/storage.ts';
 
 import type {
   BackendConfig,
@@ -316,7 +317,7 @@ export class PiAgent extends BaseAgent {
     // Build session ID and session dir path upfront (used for spawn env + init command)
     const sessionId = this.config.session?.id || `agent-${Date.now()}`;
     const sessionDir = this.config.session
-      ? join(this.config.workspace.rootPath, 'sessions', sessionId)
+      ? join(getWorkspaceDataDir(this.config.workspace.rootPath), 'sessions', sessionId)
       : undefined;
 
     // Build spawn args — optionally preload the network interceptor
