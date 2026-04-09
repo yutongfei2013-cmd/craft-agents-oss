@@ -493,7 +493,25 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
     }
     return models;
   }
-  if (providerType === 'pi_compat') return [];  // Dynamic — user specifies
+  if (providerType === 'pi_compat') {
+    // When a piAuthProvider is set, use the same model list as the corresponding
+    // Pi provider so users can pick from all models the endpoint supports.
+    if (piAuthProvider) {
+      const models = _piModelResolver(piAuthProvider);
+      const preferred = PI_PREFERRED_DEFAULTS[piAuthProvider] || [];
+      if (preferred.length > 0) {
+        models.sort((a, b) => {
+          const aIdx = preferred.findIndex(p => a.id === `pi/${p}` || a.id.startsWith(`pi/${p}-`));
+          const bIdx = preferred.findIndex(p => b.id === `pi/${p}` || b.id.startsWith(`pi/${p}-`));
+          const aPrio = aIdx >= 0 ? aIdx : preferred.length;
+          const bPrio = bIdx >= 0 ? bIdx : preferred.length;
+          return aPrio - bPrio;
+        });
+      }
+      return models;
+    }
+    return [];  // No piAuthProvider — truly dynamic, user specifies
+  }
   // anthropic
   return ANTHROPIC_MODELS;
 }

@@ -335,8 +335,10 @@ export function FreeFormInput({
   }, [currentConnection, isEmptySession, llmConnections, workspaceAllowedConnections])
 
   // Derive connectionDefaultModel per-session from the effective connection.
-  // Only non-null for compat providers (custom endpoints with fixed models).
+  // Only non-null for compat providers (custom endpoints with fixed models)
+  // that don't have a piAuthProvider (truly manual model specification).
   // Standard providers (anthropic, pi) → null → normal model picker.
+  // Compat providers with piAuthProvider → null → model picker with provider models.
   const connectionDefaultModel = React.useMemo(() => {
     const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, selectableConnections)
     const conn = llmConnections.find(c => c.slug === effectiveSlug)
@@ -344,6 +346,8 @@ export function FreeFormInput({
     if (!isCompatProvider(conn.providerType)) return null
     // Allow model switching when connection has multiple models
     if (conn.models && conn.models.length > 1) return null
+    // Allow model switching when piAuthProvider is set (models will be populated by backfill)
+    if (conn.piAuthProvider) return null
     return conn.defaultModel ?? null
   }, [currentConnection, workspaceDefaultConnection, llmConnections, selectableConnections])
 
@@ -1959,8 +1963,8 @@ Model
                   </div>
                   <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                 </StyledDropdownMenuItem>
-              ) : isEmptySession && selectableConnections.length > 1 ? (
-                /* Hierarchical view: Provider → Connection → Models (for new sessions with multiple connections) */
+              ) : selectableConnections.length > 1 ? (
+                /* Hierarchical view: Provider → Connection → Models (always shown when multiple connections available) */
                 connectionsByProvider.map(([providerName, connections], index) => (
                   <React.Fragment key={providerName}>
                     {/* Provider group label */}

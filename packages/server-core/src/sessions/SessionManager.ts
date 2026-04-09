@@ -3823,12 +3823,6 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    // Only allow changing connection before first message (session hasn't started)
-    if (managed.messages && managed.messages.length > 0) {
-      sessionLog.warn(`setSessionConnection: cannot change connection after session has started (${sessionId})`)
-      throw new Error('Cannot change connection after session has started')
-    }
-
     // Validate connection exists
     const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
     const connection = getLlmConnection(connectionSlug)
@@ -4489,24 +4483,32 @@ export class SessionManager implements ISessionManager {
       const allowedConnectionSlugs = getWorkspaceAllowedConnectionSlugs(wsConfig)
       const workspaceDefaultConnectionSlug = getWorkspaceDefaultConnectionSlug(wsConfig, allowedConnectionSlugs)
 
-      if (connection && !managed.connectionLocked && !isConnectionAllowedInWorkspace(connection, allowedConnectionSlugs)) {
+      if (connection && !isConnectionAllowedInWorkspace(connection, allowedConnectionSlugs)) {
         throw new Error(`LLM connection "${connection}" is not enabled for this workspace`)
       }
 
       managed.model = model ?? undefined
-      // Also update connection if provided and not already locked
-      if (connection && !managed.connectionLocked) {
+      // Also update connection if provided
+      const connectionChanged = connection && managed.llmConnection !== connection
+      if (connection) {
         managed.llmConnection = connection
       }
       // Persist to disk (include connection if it was updated)
       const updates: { model?: string; llmConnection?: string } = { model: model ?? undefined }
-      if (connection && !managed.connectionLocked) {
+      if (connection) {
         updates.llmConnection = connection
       }
       await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
-      // Update agent model if it already exists (takes effect on next query)
-      if (managed.agent) {
-        // Fallback chain: session model > workspace default > connection default
+
+      if (connectionChanged && managed.agent) {
+        // Connection changed — the existing agent is bound to the old provider.
+        // Dispose it so getOrCreateAgent rebuilds with the new connection.
+        sessionLog.info(`[updateSessionModel] Connection changed to "${connection}", disposing old agent for rebuild`)
+        managed.agent.dispose()
+        managed.agent = null
+        managed.connectionLocked = false
+      } else if (managed.agent) {
+        // Same connection — just update the model in-place
         const sessionConn = resolveSessionConnection(
           managed.llmConnection,
           workspaceDefaultConnectionSlug,
