@@ -297,7 +297,9 @@
   --md-counters: var(--foreground-50);
 }
 
-/* Theme Override - Semi-transparent background to allow vibrancy through */
+/* Theme Override - Semi-transparent background to allow vibrancy through.
+   Light mode uses an opaque background because Windows Mica/Acrylic can
+   introduce an undesirable dark veil beneath translucent surfaces. */
 html[data-theme-override]::before {
   content: '';
   position: fixed;
@@ -305,6 +307,10 @@ html[data-theme-override]::before {
   background: color-mix(in srgb, var(--background) 50%, transparent);
   z-index: -1;
   pointer-events: none;
+}
+
+html.light[data-theme-override]::before {
+  background: var(--background);
 }
 
 /* Theme Mismatch - Solid background when theme doesn't support current mode
