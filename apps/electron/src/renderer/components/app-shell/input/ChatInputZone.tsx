@@ -4,9 +4,11 @@ import { CHAT_LAYOUT } from '@/config/layout'
 import { flattenLabels, type LabelConfig } from '@craft-agent/shared/labels'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import type { SessionStatus } from '@/config/session-status-config'
+import { Button } from '@/components/ui/button'
 import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
+import { useOptionalAppShellContext } from '@/context/AppShellContext'
 
 interface ChatInputZoneProps {
   compactMode?: boolean
@@ -47,8 +49,12 @@ export function ChatInputZone({
   className,
   inputProps,
 }: ChatInputZoneProps) {
+  const appShellContext = useOptionalAppShellContext()
   const [autoOpenLabelId, setAutoOpenLabelId] = React.useState<string | null>(null)
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
+  const topicSwitchPrompt = appShellContext?.pendingTopicSwitchPrompt?.sessionId === sessionId
+    ? appShellContext.pendingTopicSwitchPrompt
+    : null
 
   const handleLabelAdd = React.useCallback((labelId: string) => {
     const current = sessionLabels || []
@@ -91,6 +97,32 @@ export function ChatInputZone({
           currentSessionStatus={currentSessionStatus}
           onSessionStatusChange={onSessionStatusChange}
         />
+      )}
+
+      {topicSwitchPrompt && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="text-xs text-muted-foreground">
+            This looks unrelated to the current session. Choose where to send it:
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            onClick={() => appShellContext?.onCreateSessionFromPrompt?.(sessionId)}
+          >
+            Create New Session
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="rounded-full"
+            onClick={() => appShellContext?.onContinueCurrentSession?.(sessionId)}
+          >
+            Continue Current Session
+          </Button>
+        </div>
       )}
 
       <InputContainer

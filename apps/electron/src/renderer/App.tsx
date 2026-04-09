@@ -65,8 +65,16 @@ import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '
 import { getFileManagerName } from '@/lib/platform'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
+import { shouldPromptForNewSession } from './lib/topic-relatedness'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
+type PendingTopicSwitchPrompt = {
+  sessionId: string
+  message: string
+  attachments?: FileAttachment[]
+  skillSlugs?: string[]
+  externalBadges?: ContentBadge[]
+}
 
 /** Type for the Jotai store returned by useStore() */
 type JotaiStore = ReturnType<typeof getDefaultStore>
@@ -267,6 +275,7 @@ export default function App() {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
   // Credential requests per session (queue to handle multiple concurrent requests)
   const [pendingCredentials, setPendingCredentials] = useState<Map<string, CredentialRequest[]>>(new Map())
+  const [pendingTopicSwitchPrompt, setPendingTopicSwitchPrompt] = useState<PendingTopicSwitchPrompt | null>(null)
   // Draft input text per session (preserved across mode switches and conversation changes)
   // Using ref instead of state to avoid re-renders during typing - drafts are only
   // needed for initial value restoration and disk persistence, not reactive updates
@@ -1113,7 +1122,7 @@ export default function App() {
     window.electronAPI.sessionCommand(sessionId, { type: 'rename', name })
   }, [updateSessionById])
 
-  const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
+  const performSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
     try {
       // Step 1: Store attachments and get persistent metadata
       let storedAttachments: StoredAttachment[] | undefined
@@ -1265,7 +1274,90 @@ export default function App() {
         ]
       }))
     }
-  }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId])
+  }, [updateSessionById, skills, sources, windowWorkspaceSlug])
+
+  const handleSendMessage = useCallback((
+    sessionId: string,
+    message: string,
+    attachments?: FileAttachment[],
+    skillSlugs?: string[],
+    externalBadges?: ContentBadge[]
+  ) => {
+    const currentSession = store.get(sessionAtomFamily(sessionId))
+    if (shouldPromptForNewSession(currentSession, message)) {
+      setPendingTopicSwitchPrompt({
+        sessionId,
+        message,
+        attachments,
+        skillSlugs,
+        externalBadges,
+      })
+      return
+    }
+
+    setPendingTopicSwitchPrompt(prev => prev?.sessionId === sessionId ? null : prev)
+    void performSendMessage(sessionId, message, attachments, skillSlugs, externalBadges)
+  }, [performSendMessage, store])
+
+  const handleContinueCurrentSession = useCallback((sessionId: string) => {
+    const pendingPrompt = pendingTopicSwitchPrompt
+    if (!pendingPrompt || pendingPrompt.sessionId !== sessionId) return
+
+    setPendingTopicSwitchPrompt(null)
+    void performSendMessage(
+      pendingPrompt.sessionId,
+      pendingPrompt.message,
+      pendingPrompt.attachments,
+      pendingPrompt.skillSlugs,
+      pendingPrompt.externalBadges
+    )
+  }, [pendingTopicSwitchPrompt, performSendMessage])
+
+  const handleCreateSessionFromPrompt = useCallback((sessionId: string) => {
+    const pendingPrompt = pendingTopicSwitchPrompt
+    if (!pendingPrompt || pendingPrompt.sessionId !== sessionId) return
+
+    const sourceSession = store.get(sessionAtomFamily(sessionId))
+    if (!sourceSession) {
+      setPendingTopicSwitchPrompt(null)
+      void performSendMessage(
+        pendingPrompt.sessionId,
+        pendingPrompt.message,
+        pendingPrompt.attachments,
+        pendingPrompt.skillSlugs,
+        pendingPrompt.externalBadges
+      )
+      return
+    }
+
+    setPendingTopicSwitchPrompt(null)
+
+    void (async () => {
+      try {
+        const nextSession = await handleCreateSession(sourceSession.workspaceId, {
+          llmConnection: sourceSession.llmConnection,
+          model: sourceSession.model,
+          permissionMode: sourceSession.permissionMode,
+          workingDirectory: sourceSession.workingDirectory,
+          enabledSourceSlugs: sourceSession.enabledSourceSlugs,
+        })
+
+        navigate(routes.view.allSessions(nextSession.id))
+
+        void performSendMessage(
+          nextSession.id,
+          pendingPrompt.message,
+          pendingPrompt.attachments,
+          pendingPrompt.skillSlugs,
+          pendingPrompt.externalBadges
+        )
+      } catch (error) {
+        toast.error('Failed to create a new session', {
+          description: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+    })()
+  }, [pendingTopicSwitchPrompt, store, handleCreateSession, performSendMessage])
 
   /**
    * Unified handler for all session option changes.
@@ -1288,7 +1380,7 @@ export default function App() {
       // Sync thinking level change with backend (session-level, persisted)
       window.electronAPI.sessionCommand(sessionId, { type: 'setThinkingLevel', level: updates.thinkingLevel })
     }
-  }, [sessionOptions])
+  }, [])
 
   // Handle input draft changes per session with debounced persistence
   const draftSaveTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -1613,6 +1705,11 @@ export default function App() {
     // Session callbacks
     onCreateSession: handleCreateSession,
     onSendMessage: handleSendMessage,
+    pendingTopicSwitchPrompt: pendingTopicSwitchPrompt
+      ? { sessionId: pendingTopicSwitchPrompt.sessionId, message: pendingTopicSwitchPrompt.message }
+      : null,
+    onContinueCurrentSession: handleContinueCurrentSession,
+    onCreateSessionFromPrompt: handleCreateSessionFromPrompt,
     onRenameSession: handleRenameSession,
     onFlagSession: handleFlagSession,
     onUnflagSession: handleUnflagSession,
@@ -1656,6 +1753,9 @@ export default function App() {
     sessionOptions,
     handleCreateSession,
     handleSendMessage,
+    pendingTopicSwitchPrompt,
+    handleContinueCurrentSession,
+    handleCreateSessionFromPrompt,
     handleRenameSession,
     handleFlagSession,
     handleUnflagSession,
