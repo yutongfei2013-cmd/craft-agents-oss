@@ -1874,9 +1874,12 @@ export function ResponseCard({
       }
 
       const selection = window.getSelection()
-      // Keep the island open if selection was programmatically cleared by a render update.
-      // This happens during streaming/DOM reconciliation and should not dismiss follow-up UI.
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        // Compact selection menus are only meaningful while a DOM text selection
+        // still exists. Follow-up editors / saved annotation popovers can stay open.
+        if (selectionMenuView === 'compact') {
+          closeSelectionMenu()
+        }
         return
       }
 
@@ -1900,7 +1903,7 @@ export function ResponseCard({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange)
     }
-  }, [interactionState, isSelectionMenuVisible, closeSelectionMenu, isTargetInsideAnnotationIsland, selectionMenuOpenedAtRef])
+  }, [interactionState, isSelectionMenuVisible, closeSelectionMenu, isTargetInsideAnnotationIsland, selectionMenuOpenedAtRef, selectionMenuView])
 
   const handleOpenFollowUpView = useCallback(() => {
     if (!pendingSelection) return

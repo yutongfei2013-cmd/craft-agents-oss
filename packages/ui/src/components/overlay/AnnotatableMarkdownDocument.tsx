@@ -549,6 +549,9 @@ export function AnnotatableMarkdownDocument({
 
       const selection = window.getSelection()
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        if (selectionMenuView === 'compact') {
+          closeSelectionMenu()
+        }
         return
       }
 
@@ -571,7 +574,7 @@ export function AnnotatableMarkdownDocument({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange)
     }
-  }, [interactionState, isSelectionMenuVisible, closeSelectionMenu, isTargetInsideAnnotationIsland, selectionMenuOpenedAtRef])
+  }, [interactionState, isSelectionMenuVisible, closeSelectionMenu, isTargetInsideAnnotationIsland, selectionMenuOpenedAtRef, selectionMenuView])
 
   const handleSelectionMenuRequestBack = React.useCallback((): boolean => {
     if (selectionMenuView !== 'compact') {
