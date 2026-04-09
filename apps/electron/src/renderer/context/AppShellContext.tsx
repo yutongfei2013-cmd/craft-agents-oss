@@ -43,6 +43,8 @@ export interface AppShellContextType {
   llmConnections: LlmConnectionWithStatus[]
   /** Default LLM connection slug for the current workspace */
   workspaceDefaultLlmConnection?: string
+  /** Optional allowlist of connections for the current workspace */
+  workspaceAllowedLlmConnectionSlugs?: string[]
   /** Refresh LLM connections from config */
   refreshLlmConnections: () => Promise<void>
   pendingPermissions: Map<string, PermissionRequest[]>

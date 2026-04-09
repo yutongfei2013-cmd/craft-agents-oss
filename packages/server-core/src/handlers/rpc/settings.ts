@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
+import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, getDefaultThinkingLevel, setDefaultThinkingLevel, getLlmConnection, getLlmConnections, sanitizeAllowedConnectionSlugs } from '@craft-agent/shared/config'
 import { isValidThinkingLevel, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import { getWorkspaceOrThrow } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
@@ -110,6 +110,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       workingDirectory: config?.defaults?.workingDirectory,
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
       defaultLlmConnection: config?.defaults?.defaultLlmConnection,
+      allowedLlmConnectionSlugs: config?.defaults?.allowedLlmConnectionSlugs,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
     }
   })
@@ -122,16 +123,26 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       : value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection']
+    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection', 'allowedLlmConnectionSlugs']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
 
     // Validate defaultLlmConnection exists before saving
     if (key === 'defaultLlmConnection' && normalizedValue !== undefined && normalizedValue !== null) {
-      const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
       if (!getLlmConnection(normalizedValue as string)) {
         throw new Error(`LLM connection "${normalizedValue}" not found`)
+      }
+    }
+
+    if (key === 'allowedLlmConnectionSlugs' && normalizedValue !== undefined && normalizedValue !== null) {
+      if (!Array.isArray(normalizedValue)) {
+        throw new Error('allowedLlmConnectionSlugs must be an array of connection slugs')
+      }
+      for (const slug of normalizedValue) {
+        if (typeof slug !== 'string' || !getLlmConnection(slug)) {
+          throw new Error(`LLM connection "${String(slug)}" not found`)
+        }
       }
     }
 
@@ -158,7 +169,31 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}
-      ;(config.defaults as Record<string, unknown>)[key] = normalizedValue
+      if (key === 'allowedLlmConnectionSlugs') {
+        const sanitized = sanitizeAllowedConnectionSlugs(
+          Array.isArray(normalizedValue) ? normalizedValue : undefined,
+          getLlmConnections().map((connection) => ({ slug: connection.slug })),
+        )
+
+        if (sanitized && sanitized.length > 0) {
+          config.defaults.allowedLlmConnectionSlugs = sanitized
+          const currentDefault = config.defaults.defaultLlmConnection
+          if (currentDefault && !sanitized.includes(currentDefault)) {
+            config.defaults.defaultLlmConnection = sanitized[0]
+          }
+        } else {
+          delete config.defaults.allowedLlmConnectionSlugs
+        }
+      } else {
+        ;(config.defaults as Record<string, unknown>)[key] = normalizedValue
+      }
+
+      if (key === 'defaultLlmConnection' && typeof normalizedValue === 'string') {
+        const allowed = config.defaults.allowedLlmConnectionSlugs
+        if (allowed && !allowed.includes(normalizedValue)) {
+          throw new Error(`LLM connection "${normalizedValue}" is not enabled for this workspace`)
+        }
+      }
     }
 
     // Save the config

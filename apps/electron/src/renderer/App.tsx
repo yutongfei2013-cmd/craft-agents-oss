@@ -253,6 +253,7 @@ export default function App() {
   const [llmConnections, setLlmConnections] = useState<LlmConnectionWithStatus[]>([])
   // Workspace default LLM connection (for new sessions)
   const [workspaceDefaultLlmConnection, setWorkspaceDefaultLlmConnection] = useState<string | undefined>()
+  const [workspaceAllowedLlmConnectionSlugs, setWorkspaceAllowedLlmConnectionSlugs] = useState<string[] | undefined>()
   // Global default LLM connection slug (from app config)
   const [defaultLlmConnectionSlug, setDefaultLlmConnectionSlug] = useState<string | undefined>()
 
@@ -537,6 +538,10 @@ export default function App() {
     if (windowWorkspaceId) {
       const settings = await window.electronAPI.getWorkspaceSettings(windowWorkspaceId)
       setWorkspaceDefaultLlmConnection(settings?.defaultLlmConnection)
+      setWorkspaceAllowedLlmConnectionSlugs(settings?.allowedLlmConnectionSlugs)
+    } else {
+      setWorkspaceDefaultLlmConnection(undefined)
+      setWorkspaceAllowedLlmConnectionSlugs(undefined)
     }
   }, [resolveDefaultConnectionSlug, windowWorkspaceId])
 
@@ -1599,6 +1604,7 @@ export default function App() {
     activeWorkspaceSlug: windowWorkspaceSlug,
     llmConnections,
     workspaceDefaultLlmConnection,
+    workspaceAllowedLlmConnectionSlugs,
     refreshLlmConnections,
     pendingPermissions,
     pendingCredentials,
@@ -1642,6 +1648,7 @@ export default function App() {
     windowWorkspaceSlug,
     llmConnections,
     workspaceDefaultLlmConnection,
+    workspaceAllowedLlmConnectionSlugs,
     refreshLlmConnections,
     pendingPermissions,
     pendingCredentials,

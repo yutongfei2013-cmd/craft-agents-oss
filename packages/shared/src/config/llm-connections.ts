@@ -186,6 +186,42 @@ export interface LlmConnectionWithStatus extends LlmConnection {
   isDefault?: boolean;
 }
 
+export function sanitizeAllowedConnectionSlugs<T extends Pick<LlmConnectionWithStatus, 'slug'>>(
+  allowedConnectionSlugs: readonly string[] | undefined,
+  connections: readonly T[],
+): string[] | undefined {
+  if (!allowedConnectionSlugs) return undefined;
+
+  const validSlugs = new Set(connections.map((connection) => connection.slug));
+  const seen = new Set<string>();
+  const sanitized: string[] = [];
+
+  for (const slug of allowedConnectionSlugs) {
+    if (!validSlugs.has(slug) || seen.has(slug)) continue;
+    seen.add(slug);
+    sanitized.push(slug);
+  }
+
+  return sanitized;
+}
+
+export function isConnectionAllowedInWorkspace(
+  connectionSlug: string,
+  allowedConnectionSlugs?: readonly string[],
+): boolean {
+  return !allowedConnectionSlugs || allowedConnectionSlugs.includes(connectionSlug);
+}
+
+export function filterConnectionsForWorkspace<T extends Pick<LlmConnectionWithStatus, 'slug'>>(
+  connections: readonly T[],
+  allowedConnectionSlugs?: readonly string[],
+): T[] {
+  if (!allowedConnectionSlugs) return [...connections];
+
+  const allowed = new Set(allowedConnectionSlugs);
+  return connections.filter((connection) => allowed.has(connection.slug));
+}
+
 // ============================================================
 // Helpers
 // ============================================================

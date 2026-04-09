@@ -23,7 +23,7 @@ import { routes } from '@/lib/navigate'
 import { ensureSessionMessagesLoadedAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { getSessionTitle } from '@/utils/session'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
-import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
+import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable, filterConnectionsForWorkspace } from '@config/llm-connections'
 
 export interface ChatPageProps {
   sessionId: string
@@ -39,6 +39,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     activeWorkspaceId,
     llmConnections,
     workspaceDefaultLlmConnection,
+    workspaceAllowedLlmConnectionSlugs,
     onSendMessage,
     onOpenFile,
     onOpenUrl,
@@ -213,13 +214,17 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     // When connection is unavailable, don't resolve through a different connection
     if (connectionUnavailable) return session?.model ?? ''
 
+    const selectableConnections = session?.llmConnection
+      ? llmConnections
+      : filterConnectionsForWorkspace(llmConnections, workspaceAllowedLlmConnectionSlugs)
+
     const connectionSlug = resolveEffectiveConnectionSlug(
-      session?.llmConnection, workspaceDefaultLlmConnection, llmConnections
+      session?.llmConnection, workspaceDefaultLlmConnection, selectableConnections
     )
-    const connection = connectionSlug ? llmConnections.find(c => c.slug === connectionSlug) : null
+    const connection = connectionSlug ? selectableConnections.find(c => c.slug === connectionSlug) : null
 
     return connection?.defaultModel ?? ''
-  }, [session?.id, session?.model, session?.llmConnection, workspaceDefaultLlmConnection, llmConnections, connectionUnavailable])
+  }, [session?.id, session?.model, session?.llmConnection, workspaceDefaultLlmConnection, workspaceAllowedLlmConnectionSlugs, llmConnections, connectionUnavailable])
 
   // Working directory for this session
   const workingDirectory = session?.workingDirectory

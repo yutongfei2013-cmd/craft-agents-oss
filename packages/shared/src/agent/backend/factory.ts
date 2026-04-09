@@ -27,9 +27,11 @@ import { ClaudeAgent } from '../claude-agent.ts';
 import { PiAgent } from '../pi-agent.ts';
 import {
   getLlmConnection,
+  getLlmConnections,
   getDefaultLlmConnection,
   type LlmConnection,
 } from '../../config/storage.ts';
+import { isConnectionAllowedInWorkspace } from '../../config/llm-connections.ts';
 // Import deprecated type for legacy migration function only
 import type { LlmConnectionType, CustomEndpointConfig } from '../../config/llm-connections.ts';
 // Import validation helpers for provider-auth combinations
@@ -321,7 +323,8 @@ export function connectionAuthTypeToBackendAuthType(
  */
 export function resolveSessionConnection(
   sessionConnection?: string,
-  workspaceDefaultConnection?: string
+  workspaceDefaultConnection?: string,
+  allowedConnectionSlugs?: readonly string[],
 ): LlmConnection | null {
   // 1. Session-level connection (locked after first message)
   if (sessionConnection) {
@@ -330,15 +333,30 @@ export function resolveSessionConnection(
   }
 
   // 2. Workspace default
-  if (workspaceDefaultConnection) {
+  if (
+    workspaceDefaultConnection &&
+    isConnectionAllowedInWorkspace(workspaceDefaultConnection, allowedConnectionSlugs)
+  ) {
     const connection = getLlmConnection(workspaceDefaultConnection);
     if (connection) return connection;
   }
 
   // 3. Global default
   const defaultSlug = getDefaultLlmConnection();
-  if (!defaultSlug) return null;
-  return getLlmConnection(defaultSlug);
+  if (
+    defaultSlug &&
+    isConnectionAllowedInWorkspace(defaultSlug, allowedConnectionSlugs)
+  ) {
+    const connection = getLlmConnection(defaultSlug);
+    if (connection) return connection;
+  }
+
+  // 4. First allowed configured connection
+  const connections = getLlmConnections();
+  const fallback = connections.find((connection) =>
+    isConnectionAllowedInWorkspace(connection.slug, allowedConnectionSlugs)
+  );
+  return fallback ?? null;
 }
 
 /**
@@ -353,11 +371,13 @@ export interface ResolvedBackendContext extends BackendResolutionContext {}
 export function resolveBackendContext(args: {
   sessionConnectionSlug?: string;
   workspaceDefaultConnectionSlug?: string;
+  allowedConnectionSlugs?: readonly string[];
   managedModel?: string;
 }): ResolvedBackendContext {
   const connection = resolveSessionConnection(
     args.sessionConnectionSlug,
-    args.workspaceDefaultConnectionSlug
+    args.workspaceDefaultConnectionSlug,
+    args.allowedConnectionSlugs,
   );
 
   const provider = connection

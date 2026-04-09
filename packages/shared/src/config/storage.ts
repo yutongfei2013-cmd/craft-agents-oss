@@ -2186,7 +2186,7 @@ export function migrateLegacyLlmConnectionsConfig(): void {
  * This can happen when a connection is removed or was never created
  * (e.g. "anthropic-api" is set as default but only "claude-max" exists).
  *
- * Fixes both the global defaultLlmConnection and per-workspace defaults.
+ * Fixes both the global defaultLlmConnection and per-workspace defaults/allowlists.
  * Called on app startup alongside other migrations.
  */
 export function migrateOrphanedDefaultConnections(): void {
@@ -2206,6 +2206,18 @@ export function migrateOrphanedDefaultConnections(): void {
     const workspaces = getWorkspaces();
     for (const ws of workspaces) {
       const wsConfig = loadWorkspaceConfig(ws.rootPath);
+      if (wsConfig?.defaults?.allowedLlmConnectionSlugs) {
+        const nextAllowed = wsConfig.defaults.allowedLlmConnectionSlugs.filter((slug) =>
+          config.llmConnections!.some((connection) => connection.slug === slug)
+        );
+        if (nextAllowed.length > 0) {
+          wsConfig.defaults.allowedLlmConnectionSlugs = nextAllowed;
+        } else {
+          delete wsConfig.defaults.allowedLlmConnectionSlugs;
+        }
+        saveWorkspaceConfig(ws.rootPath, wsConfig);
+      }
+
       if (wsConfig?.defaults?.defaultLlmConnection) {
         const exists = config.llmConnections.some(
           c => c.slug === wsConfig.defaults!.defaultLlmConnection
@@ -2480,8 +2492,21 @@ export function deleteLlmConnection(slug: string): boolean {
     const workspaces = getWorkspaces();
     for (const ws of workspaces) {
       const wsConfig = loadWorkspaceConfig(ws.rootPath);
-      if (wsConfig?.defaults?.defaultLlmConnection === slug) {
-        wsConfig.defaults.defaultLlmConnection = undefined;
+      if (wsConfig?.defaults) {
+        if (wsConfig.defaults.defaultLlmConnection === slug) {
+          wsConfig.defaults.defaultLlmConnection = undefined;
+        }
+        if (wsConfig.defaults.allowedLlmConnectionSlugs) {
+          const nextAllowed = wsConfig.defaults.allowedLlmConnectionSlugs.filter((candidate) => candidate !== slug);
+          if (nextAllowed.length > 0) {
+            wsConfig.defaults.allowedLlmConnectionSlugs = nextAllowed;
+            if (!wsConfig.defaults.defaultLlmConnection || !nextAllowed.includes(wsConfig.defaults.defaultLlmConnection)) {
+              wsConfig.defaults.defaultLlmConnection = nextAllowed[0];
+            }
+          } else {
+            delete wsConfig.defaults.allowedLlmConnectionSlugs;
+          }
+        }
         saveWorkspaceConfig(ws.rootPath, wsConfig);
       }
     }

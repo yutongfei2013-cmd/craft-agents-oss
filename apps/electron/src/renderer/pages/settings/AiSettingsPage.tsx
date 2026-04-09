@@ -49,7 +49,12 @@ import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType, type CustomEndpointApi } from '@config/llm-connections'
+import {
+  getModelsForProviderType,
+  filterConnectionsForWorkspace,
+  sanitizeAllowedConnectionSlugs,
+  type CustomEndpointApi,
+} from '@config/llm-connections'
 import { toast } from 'sonner'
 
 /**
@@ -335,6 +340,7 @@ interface WorkspaceOverrideCardProps {
 
 const WORKSPACE_SETTING_LABELS: Partial<Record<keyof WorkspaceSettings, string>> = {
   defaultLlmConnection: 'workspace connection override',
+  allowedLlmConnectionSlugs: 'workspace connection allowlist',
   model: 'workspace model override',
   thinkingLevel: 'workspace thinking override',
 }
@@ -347,22 +353,23 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
   // Fetch workspace icon as data URL (file:// URLs don't work in renderer)
   const iconUrl = useWorkspaceIcon(workspace)
 
+  const loadSettings = useCallback(async () => {
+    if (!window.electronAPI) return
+    setIsLoading(true)
+    try {
+      const ws = await window.electronAPI.getWorkspaceSettings(workspace.id)
+      setSettings(ws)
+    } catch (error) {
+      console.error('Failed to load workspace settings:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [workspace.id])
+
   // Load workspace settings
   useEffect(() => {
-    const loadSettings = async () => {
-      if (!window.electronAPI) return
-      setIsLoading(true)
-      try {
-        const ws = await window.electronAPI.getWorkspaceSettings(workspace.id)
-        setSettings(ws)
-      } catch (error) {
-        console.error('Failed to load workspace settings:', error)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    loadSettings()
-  }, [workspace.id])
+    void loadSettings()
+  }, [loadSettings])
 
   // Save workspace setting helper (optimistic update with rollback)
   const updateSetting = useCallback(async <K extends keyof WorkspaceSettings>(key: K, value: WorkspaceSettings[K]) => {
@@ -394,6 +401,54 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
     updateSetting('defaultLlmConnection', slug === 'global' ? undefined : slug)
   }, [updateSetting])
 
+  const effectiveAllowedConnectionSlugs = useMemo(() => {
+    return sanitizeAllowedConnectionSlugs(settings?.allowedLlmConnectionSlugs, llmConnections)
+      ?? llmConnections.map((connection) => connection.slug)
+  }, [settings?.allowedLlmConnectionSlugs, llmConnections])
+
+  const allowedConnections = useMemo(() => {
+    return filterConnectionsForWorkspace(llmConnections, settings?.allowedLlmConnectionSlugs)
+  }, [llmConnections, settings?.allowedLlmConnectionSlugs])
+
+  const handleConnectionToggle = useCallback(async (slug: string, checked: boolean) => {
+    if (!window.electronAPI || !settings) return
+
+    const nextAllowed = checked
+      ? [...effectiveAllowedConnectionSlugs, slug]
+      : effectiveAllowedConnectionSlugs.filter((candidate) => candidate !== slug)
+
+    const deduped = Array.from(new Set(nextAllowed))
+    if (deduped.length === 0) {
+      toast.error('At least one connection must remain enabled')
+      return
+    }
+
+    const nextStoredValue = deduped.length === llmConnections.length ? undefined : deduped
+    const nextDefault = settings.defaultLlmConnection && deduped.includes(settings.defaultLlmConnection)
+      ? settings.defaultLlmConnection
+      : deduped[0]
+    const previous = settings
+
+    setSettings({
+      ...settings,
+      allowedLlmConnectionSlugs: nextStoredValue,
+      defaultLlmConnection: nextDefault,
+    })
+
+    try {
+      await window.electronAPI.updateWorkspaceSetting(workspace.id, 'allowedLlmConnectionSlugs', nextStoredValue)
+      onSettingsChange()
+      void loadSettings()
+    } catch (error) {
+      setSettings(previous)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      console.error('Failed to save allowedLlmConnectionSlugs:', error)
+      toast.error('Failed to save workspace connection allowlist', {
+        description: message,
+      })
+    }
+  }, [effectiveAllowedConnectionSlugs, llmConnections.length, loadSettings, onSettingsChange, settings, workspace.id])
+
   const handleModelChange = useCallback((model: string) => {
     // 'global' means use app default (clear workspace override)
     updateSetting('model', model === 'global' ? undefined : model)
@@ -407,6 +462,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
   // Determine if workspace has any overrides
   const hasOverrides = settings && (
     settings.defaultLlmConnection ||
+    (settings.allowedLlmConnectionSlugs && settings.allowedLlmConnectionSlugs.length > 0 && settings.allowedLlmConnectionSlugs.length < llmConnections.length) ||
     settings.model ||
     settings.thinkingLevel
   )
@@ -419,8 +475,13 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
   // Derive workspace's effective connection (override or default)
   const workspaceEffectiveConnection = useMemo(() => {
     const connSlug = settings?.defaultLlmConnection
-    return connSlug ? llmConnections.find(c => c.slug === connSlug) : llmConnections.find(c => c.isDefault)
-  }, [settings?.defaultLlmConnection, llmConnections])
+    if (connSlug) return llmConnections.find(c => c.slug === connSlug)
+
+    const globalDefault = llmConnections.find(c => c.isDefault)
+    if (globalDefault && effectiveAllowedConnectionSlugs.includes(globalDefault.slug)) return globalDefault
+
+    return allowedConnections[0]
+  }, [allowedConnections, effectiveAllowedConnectionSlugs, settings?.defaultLlmConnection, llmConnections])
 
   // Get summary text for collapsed state
   const getSummary = () => {
@@ -429,6 +490,9 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
     if (settings?.defaultLlmConnection) {
       const conn = llmConnections.find(c => c.slug === settings.defaultLlmConnection)
       parts.push(conn?.name || settings.defaultLlmConnection)
+    }
+    if (settings?.allowedLlmConnectionSlugs && settings.allowedLlmConnectionSlugs.length > 0 && settings.allowedLlmConnectionSlugs.length < llmConnections.length) {
+      parts.push(`${settings.allowedLlmConnectionSlugs.length} connections`)
     }
     if (settings?.model) {
       parts.push(getModelShortName(settings.model))
@@ -493,7 +557,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                 onValueChange={handleConnectionChange}
                 options={[
                   { value: 'global', label: 'Use default', description: 'Inherit from app settings' },
-                  ...llmConnections.map((conn) => ({
+                  ...allowedConnections.map((conn) => ({
                     value: conn.slug,
                     label: conn.name,
                     description: conn.providerType === 'anthropic' ? 'Anthropic' :
@@ -512,6 +576,28 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                   ...getModelOptionsForConnection(workspaceEffectiveConnection),
                 ]}
               />
+              <div className="px-4 py-3.5 border-t border-border/50">
+                <div className="text-sm font-medium">Available Connections</div>
+                <p className="text-sm text-muted-foreground mt-1">Connections that new chats in this workspace can use</p>
+                <div className="mt-3 space-y-1.5">
+                  {llmConnections.map((conn) => (
+                    <SettingsToggle
+                      key={conn.slug}
+                      label={
+                        <span className="inline-flex items-center gap-2">
+                          <ConnectionIcon connection={conn} size={14} />
+                          {conn.name}
+                        </span>
+                      }
+                      description={conn.providerType === 'anthropic' ? 'Anthropic' :
+                        conn.providerType === 'pi' ? 'Craft Agents Backend' :
+                        conn.providerType || 'Unknown'}
+                      checked={effectiveAllowedConnectionSlugs.includes(conn.slug)}
+                      onCheckedChange={(checked) => { void handleConnectionToggle(conn.slug, checked) }}
+                    />
+                  ))}
+                </div>
+              </div>
               <SettingsMenuSelectRow
                 label="Thinking"
                 description="Reasoning depth for new chats"

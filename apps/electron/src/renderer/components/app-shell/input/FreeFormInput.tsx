@@ -56,7 +56,7 @@ import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, type ModelDefinition } from '@config/models'
-import { resolveEffectiveConnectionSlug, isCompatProvider } from '@config/llm-connections'
+import { resolveEffectiveConnectionSlug, isCompatProvider, filterConnectionsForWorkspace } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { SourceAvatar } from '@/components/ui/source-avatar'
@@ -94,6 +94,28 @@ function formatTokenCount(tokens: number): string {
 
 function stripPiPrefixForDisplay(value: string): string {
   return value.startsWith('pi/') ? value.slice(3) : value
+}
+
+function getConnectionRouteLabel(connection: {
+  name: string
+  providerType?: string
+  authType?: string
+  piAuthProvider?: string
+}): string {
+  if (connection.authType === 'oauth') return connection.name
+
+  if (connection.providerType === 'pi' && connection.piAuthProvider) {
+    switch (connection.piAuthProvider) {
+      case 'google': return 'Google AI Studio'
+      case 'github-copilot': return 'GitHub Copilot'
+      case 'openai':
+      case 'openai-codex': return 'OpenAI API'
+      default: return connection.name
+    }
+  }
+
+  if (connection.providerType === 'anthropic') return 'Anthropic API'
+  return connection.name
 }
 
 function formatFollowUpChipText(text: string, fallback: string, maxLength = 50): string {
@@ -295,19 +317,35 @@ export function FreeFormInput({
   const appShellCtx = useOptionalAppShellContext()
   const llmConnections = appShellCtx?.llmConnections ?? []
   const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
+  const workspaceAllowedConnections = appShellCtx?.workspaceAllowedLlmConnectionSlugs
+
+  const selectableConnections = React.useMemo(() => {
+    const baseConnections = isEmptySession
+      ? filterConnectionsForWorkspace(llmConnections, workspaceAllowedConnections)
+      : [...llmConnections]
+
+    if (!currentConnection) return baseConnections
+
+    const current = llmConnections.find((connection) => connection.slug === currentConnection)
+    if (!current || baseConnections.some((connection) => connection.slug === currentConnection)) {
+      return baseConnections
+    }
+
+    return [current, ...baseConnections]
+  }, [currentConnection, isEmptySession, llmConnections, workspaceAllowedConnections])
 
   // Derive connectionDefaultModel per-session from the effective connection.
   // Only non-null for compat providers (custom endpoints with fixed models).
   // Standard providers (anthropic, pi) → null → normal model picker.
   const connectionDefaultModel = React.useMemo(() => {
-    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
+    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, selectableConnections)
     const conn = llmConnections.find(c => c.slug === effectiveSlug)
     if (!conn) return null
     if (!isCompatProvider(conn.providerType)) return null
     // Allow model switching when connection has multiple models
     if (conn.models && conn.models.length > 1) return null
     return conn.defaultModel ?? null
-  }, [currentConnection, workspaceDefaultConnection, llmConnections])
+  }, [currentConnection, workspaceDefaultConnection, llmConnections, selectableConnections])
 
   // Compute available models from the effective connection.
   // All connections have models populated by backfillAllConnectionModels().
@@ -316,7 +354,7 @@ export function FreeFormInput({
     if (connectionUnavailable) return []
 
     // Determine effective connection using the canonical fallback chain
-    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
+    const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, selectableConnections)
     const connection = llmConnections.find(c => c.slug === effectiveSlug)
 
     if (!connection) {
@@ -324,7 +362,7 @@ export function FreeFormInput({
     }
 
     return connection.models || ANTHROPIC_MODELS
-  }, [llmConnections, currentConnection, workspaceDefaultConnection, connectionUnavailable])
+  }, [llmConnections, currentConnection, workspaceDefaultConnection, connectionUnavailable, selectableConnections])
 
   const availableThinkingLevels = THINKING_LEVELS
 
@@ -350,11 +388,11 @@ export function FreeFormInput({
   // Group connections by provider type for hierarchical dropdown
   // Each provider (Anthropic, Pi) can have multiple connections (API Key, OAuth, etc.)
   const connectionsByProvider = React.useMemo(() => {
-    const groups: Record<string, typeof llmConnections> = {
+    const groups: Record<string, typeof selectableConnections> = {
       'Anthropic': [],
       'Craft Agents Backend': [],
     }
-    for (const conn of llmConnections) {
+    for (const conn of selectableConnections) {
       const provider = conn.providerType || 'anthropic'
       // Group by SDK: only 'anthropic' uses Claude Agent SDK
       if (provider === 'anthropic') {
@@ -365,20 +403,13 @@ export function FreeFormInput({
     }
     // Return only non-empty groups
     return Object.entries(groups).filter(([, conns]) => conns.length > 0)
-  }, [llmConnections])
-
-  // Find current connection details for display
-  const currentConnectionDetails = React.useMemo(() => {
-    if (!currentConnection) return null
-    return llmConnections.find(c => c.slug === currentConnection) ?? null
-  }, [llmConnections, currentConnection])
+  }, [selectableConnections])
 
   // Effective connection: canonical fallback chain (session → workspace default → global default → first)
-  const effectiveConnection = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
+  const effectiveConnection = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, selectableConnections)
 
   // Effective connection details (with fallbacks) for model list
-  // Unlike currentConnectionDetails which is null when no explicit connection is set,
-  // this resolves to the actual connection being used (including workspace default)
+  // Resolves to the actual connection being used (including workspace/global defaults).
   const effectiveConnectionDetails = React.useMemo(() => {
     if (!effectiveConnection) return null
     return llmConnections.find(c => c.slug === effectiveConnection) ?? null
@@ -1895,7 +1926,7 @@ export function FreeFormInput({
                       </>
                     ) : (
                       <>
-                        {effectiveConnectionDetails && llmConnections.length > 1 && storage.get(storage.KEYS.showConnectionIcons, true) && <ConnectionIcon connection={effectiveConnectionDetails} size={14} showTooltip />}
+                        {effectiveConnectionDetails && selectableConnections.length > 1 && storage.get(storage.KEYS.showConnectionIcons, true) && <ConnectionIcon connection={effectiveConnectionDetails} size={14} showTooltip />}
                         {currentModelDisplayName}
                         {!connectionDefaultModel && <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />}
                       </>
@@ -1924,11 +1955,11 @@ Model
                 >
                   <div className="text-left">
                     <div className="font-medium text-sm">{stripPiPrefixForDisplay(connectionDefaultModel)}</div>
-                    <div className="text-xs text-muted-foreground">Connection default</div>
+                    <div className="text-xs text-muted-foreground">via {effectiveConnectionDetails ? getConnectionRouteLabel(effectiveConnectionDetails) : 'selected connection'}</div>
                   </div>
                   <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                 </StyledDropdownMenuItem>
-              ) : isEmptySession && llmConnections.length > 1 ? (
+              ) : isEmptySession && selectableConnections.length > 1 ? (
                 /* Hierarchical view: Provider → Connection → Models (for new sessions with multiple connections) */
                 connectionsByProvider.map(([providerName, connections], index) => (
                   <React.Fragment key={providerName}>
@@ -2000,10 +2031,10 @@ Model
                 /* Flat model list (single connection or session started) */
                 <>
                   {/* Indicator showing which connection is being used */}
-                  {!isEmptySession && currentConnectionDetails && llmConnections.length > 1 && (
+                  {!isEmptySession && effectiveConnectionDetails && selectableConnections.length > 1 && (
                     <>
                       <div className="flex items-center gap-2 px-2 py-1.5 text-xs select-none text-muted-foreground">
-                        <span>Using {currentConnectionDetails.name}</span>
+                        <span>Using {getConnectionRouteLabel(effectiveConnectionDetails)}</span>
                       </div>
                       <StyledDropdownMenuSeparator className="my-1" />
                     </>
@@ -2022,8 +2053,13 @@ Model
                       >
                         <div className="text-left">
                           <div className="font-medium text-sm">{modelName}</div>
-                          {description && (
-                            <div className="text-xs text-muted-foreground">{description}</div>
+                          {(description || effectiveConnectionDetails) && (
+                            <div className="text-xs text-muted-foreground">
+                              {description || `via ${getConnectionRouteLabel(effectiveConnectionDetails!)}`}
+                            </div>
+                          )}
+                          {description && effectiveConnectionDetails && (
+                            <div className="text-xs text-muted-foreground">via {getConnectionRouteLabel(effectiveConnectionDetails)}</div>
                           )}
                         </div>
                         {isSelected && (
