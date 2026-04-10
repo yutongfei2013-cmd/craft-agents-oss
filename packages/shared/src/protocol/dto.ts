@@ -300,6 +300,33 @@ export interface DirectoryListingResult {
   entries: Array<{ name: string; path: string; isSymlink: boolean }>
 }
 
+/** Project/workspace file-system entry for lazy file tree browsing. */
+export interface FileSystemEntry {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  size?: number
+  isSymlink: boolean
+}
+
+/** Server-side file + directory listing result for project explorer views. */
+export interface FileSystemEntriesResult {
+  /** Normalized absolute path of the listed directory (after resolve(), not symlink-resolved). */
+  currentPath: string
+  /** Parent directory path, or null if at root. */
+  parentPath: string | null
+  /** Pre-split breadcrumb segments for display (computed server-side). */
+  breadcrumbs: Array<{ name: string; path: string }>
+  /** Server platform info. */
+  platform: 'win32' | 'darwin' | 'linux'
+  /** Whether the server truncated the directory list for safety/performance. */
+  truncated: boolean
+  /** Total number of matching child entries before truncation. */
+  totalEntries: number
+  /** Child directory and file entries. */
+  entries: FileSystemEntry[]
+}
+
 // ---------------------------------------------------------------------------
 // File types
 // ---------------------------------------------------------------------------

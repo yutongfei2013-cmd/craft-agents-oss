@@ -30,12 +30,13 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
+  isFilesNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
 import { sourceSelection, skillSelection, automationSelection } from '@/hooks/useEntitySelection'
 import { extractLabelId } from '@craft-agent/shared/labels'
 import type { SessionStatusId } from '@/config/session-status-config'
-import { SourceInfoPage, ChatPage } from '@/pages'
+import { SourceInfoPage, ChatPage, FileInfoPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
@@ -79,6 +80,7 @@ export function MainContentPanel({
     automationTestResults,
     getAutomationHistory,
     activeSessionWorkingDirectory,
+    activeTargetSessionId,
   } = useAppShellContext()
 
   // Session multi-select state
@@ -304,6 +306,15 @@ export function MainContentPanel({
           <p className="text-sm">No skills configured</p>
         </div>
       </Panel>
+    )
+  }
+
+  if (isFilesNavigation(navState)) {
+    return wrapWithStoplight(
+      <FileInfoPage
+        filePath={navState.details?.filePath ?? null}
+        targetSessionId={activeTargetSessionId}
+      />
     )
   }
 

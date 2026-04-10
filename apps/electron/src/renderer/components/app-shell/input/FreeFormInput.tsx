@@ -12,7 +12,7 @@ import {
   AlertCircle,
   X,
 } from 'lucide-react'
-import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
+import { Icon_Home, Icon_Folder, Spinner, classifyFile } from '@craft-agent/ui'
 
 import * as storage from '@/lib/local-storage'
 import { useDirectoryPicker } from '@/hooks/useDirectoryPicker'
@@ -72,6 +72,8 @@ import { ToolbarStatusSlot } from './ToolbarStatusSlot'
 import { buildPlanApprovalMessage } from '../plan-approval-message'
 import { shouldHandleScopedInputEvent } from './input-event-guards'
 import { clearPendingFocusForSession, consumePendingFocusForSession } from './focus-input-events'
+import { clearPendingInsertTextForSession, consumePendingInsertTextForSession, type InsertTextEventDetail } from './insert-text-events'
+import { clearPendingAttachmentsForSession, consumePendingAttachmentsForSession } from './attachment-input-events'
 import {
   getRecentWorkingDirs,
   addRecentWorkingDir,
@@ -90,6 +92,117 @@ function formatTokenCount(tokens: number): string {
     return `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k`
   }
   return tokens.toString()
+}
+
+function getAttachmentIdentity(attachment: FileAttachment): string {
+  return [attachment.path, attachment.name, attachment.size, attachment.mimeType].join('::')
+}
+
+function getBaseName(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] || path
+}
+
+function getExtension(path: string): string {
+  const baseName = getBaseName(path)
+  const dotIndex = baseName.lastIndexOf('.')
+  if (dotIndex <= 0) return ''
+  return baseName.slice(dotIndex + 1).toLowerCase()
+}
+
+function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 8192
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)))
+  }
+  return btoa(binary)
+}
+
+const OFFICE_MIME_BY_EXTENSION: Record<string, string> = {
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+
+function getExistingFileAttachmentKind(filePath: string): {
+  type: FileAttachment['type']
+  mimeType: string
+} {
+  const classification = classifyFile(filePath)
+  const ext = getExtension(filePath)
+
+  if (classification.type === 'image') {
+    const mimeType =
+      ext === 'jpg' ? 'image/jpeg'
+      : ext === 'svg' ? 'image/svg+xml'
+      : ext === 'ico' ? 'image/x-icon'
+      : ext === 'avif' ? 'image/avif'
+      : `image/${ext || 'png'}`
+    return { type: 'image', mimeType }
+  }
+
+  if (classification.type === 'pdf') {
+    return { type: 'pdf', mimeType: 'application/pdf' }
+  }
+
+  if (classification.type === 'markdown' || classification.type === 'json' || classification.type === 'code' || classification.type === 'text') {
+    return { type: 'text', mimeType: 'text/plain' }
+  }
+
+  if (ext in OFFICE_MIME_BY_EXTENSION) {
+    return { type: 'office', mimeType: OFFICE_MIME_BY_EXTENSION[ext]! }
+  }
+
+  return { type: 'unknown', mimeType: 'application/octet-stream' }
+}
+
+async function readExistingFileAsAttachment(filePath: string): Promise<FileAttachment | null> {
+  const name = getBaseName(filePath)
+  const { type, mimeType } = getExistingFileAttachmentKind(filePath)
+
+  if (type === 'image') {
+    const dataUrl = await window.electronAPI.readFileDataUrl(filePath)
+    const base64 = dataUrl.split(',', 2)[1]
+    if (!base64) {
+      throw new Error('Image data is missing')
+    }
+
+    return {
+      type,
+      path: filePath,
+      name,
+      mimeType,
+      base64,
+      size: Math.floor((base64.length * 3) / 4),
+    }
+  }
+
+  if (type === 'text') {
+    const text = await window.electronAPI.readFile(filePath)
+    return {
+      type,
+      path: filePath,
+      name,
+      mimeType,
+      text,
+      size: new Blob([text]).size,
+    }
+  }
+
+  const binary = await window.electronAPI.readFileBinary(filePath)
+  return {
+    type,
+    path: filePath,
+    name,
+    mimeType,
+    base64: arrayBufferToBase64(binary),
+    size: binary.byteLength,
+  }
 }
 
 function stripPiPrefixForDisplay(value: string): string {
@@ -125,6 +238,19 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
     : normalized
+}
+
+function applyInsertText({
+  current,
+  detail,
+}: {
+  current: string
+  detail: InsertTextEventDetail
+}): string {
+  if (detail.mode !== 'append') return detail.text
+  if (!current) return detail.text
+  if (current.endsWith(' ') || current.endsWith('\n')) return current + detail.text
+  return `${current} ${detail.text}`
 }
 
 
@@ -476,6 +602,19 @@ export function FreeFormInput({
     attachmentsRef.current = attachments
   }, [attachments])
 
+  const appendAttachment = React.useCallback((attachment: FileAttachment): boolean => {
+    let added = false
+    const identity = getAttachmentIdentity(attachment)
+    setAttachments((prev) => {
+      if (prev.some((existing) => getAttachmentIdentity(existing) === identity)) {
+        return prev
+      }
+      added = true
+      return [...prev, attachment]
+    })
+    return added
+  }, [])
+
   // Optimistic state for source selection - updates UI immediately before IPC round-trip completes
   const [optimisticSourceSlugs, setOptimisticSourceSlugs] = React.useState(enabledSourceSlugs)
 
@@ -591,24 +730,52 @@ export function FreeFormInput({
   // Listen for craft:insert-text events (generic mechanism for inserting text into input)
   // Used by components that want to pre-fill the input with text
   React.useEffect(() => {
-    const handleInsertText = (e: CustomEvent<{ text: string; sessionId?: string }>) => {
+    const handleInsertText = (e: CustomEvent<InsertTextEventDetail>) => {
       const targetSessionId = e.detail?.sessionId
       if (!shouldHandleScopedInputEvent({ sessionId, isFocusedPanel, targetSessionId })) return
 
-      const { text } = e.detail
-      setInput(text)
-      syncToParent(text)
+      clearPendingInsertTextForSession(sessionId)
+      const nextText = applyInsertText({
+        current: inputRef.current,
+        detail: e.detail,
+      })
+
+      setInput(nextText)
+      syncToParent(nextText)
       // Focus the input after inserting
       setTimeout(() => {
         richInputRef.current?.focus()
         // Move cursor to end
-        richInputRef.current?.setSelectionRange(text.length, text.length)
+        richInputRef.current?.setSelectionRange(nextText.length, nextText.length)
       }, 0)
     }
 
     window.addEventListener('craft:insert-text', handleInsertText as EventListener)
     return () => window.removeEventListener('craft:insert-text', handleInsertText as EventListener)
   }, [sessionId, isFocusedPanel, syncToParent, richInputRef])
+
+  React.useEffect(() => {
+    if (!sessionId) return
+
+    const pendingInsertions = consumePendingInsertTextForSession(sessionId)
+    if (pendingInsertions.length === 0) return
+
+    let nextText = inputRef.current
+    for (const detail of pendingInsertions) {
+      nextText = applyInsertText({
+        current: nextText,
+        detail,
+      })
+    }
+
+    setInput(nextText)
+    syncToParent(nextText)
+
+    setTimeout(() => {
+      richInputRef.current?.focus()
+      richInputRef.current?.setSelectionRange(nextText.length, nextText.length)
+    }, 0)
+  }, [sessionId, syncToParent, richInputRef])
 
   const clearInputDraft = React.useCallback(() => {
     setInput('')
@@ -849,7 +1016,7 @@ export function FreeFormInput({
         try {
           const attachment = await readFileAsAttachment(files[i], fileNames[i])
           if (attachment) {
-            setAttachments(prev => [...prev, attachment])
+            appendAttachment(attachment)
           }
         } catch (error) {
           console.error('[FreeFormInput] Failed to process pasted file:', error)
@@ -863,7 +1030,88 @@ export function FreeFormInput({
 
     window.addEventListener('craft:paste-files', handlePasteFiles as unknown as EventListener)
     return () => window.removeEventListener('craft:paste-files', handlePasteFiles as unknown as EventListener)
-  }, [disabled, sessionId, isFocusedPanel, richInputRef])
+  }, [appendAttachment, disabled, sessionId, isFocusedPanel, richInputRef])
+
+  React.useEffect(() => {
+    const handleAttachFilePaths = async (e: CustomEvent<{ paths: string[]; sessionId?: string }>) => {
+      if (disabled) return
+
+      const targetSessionId = e.detail?.sessionId
+      if (!shouldHandleScopedInputEvent({ sessionId, isFocusedPanel, targetSessionId })) return
+
+      const paths = e.detail?.paths ?? []
+      if (paths.length === 0) return
+      clearPendingAttachmentsForSession(sessionId)
+
+      setLoadingCount((prev) => prev + paths.length)
+
+      for (const path of paths) {
+        try {
+          const attachment = await readExistingFileAsAttachment(path)
+          if (attachment) {
+            const added = appendAttachment(attachment)
+            if (added) {
+              toast.success('Attached file', { description: attachment.name })
+            }
+          }
+        } catch (error) {
+          console.error('[FreeFormInput] Failed to attach existing file:', path, error)
+          toast.error('Failed to attach file', {
+            description: `${getBaseName(path)}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          })
+        } finally {
+          setLoadingCount((prev) => prev - 1)
+        }
+      }
+
+      richInputRef.current?.focus()
+    }
+
+    window.addEventListener('craft:attach-file-paths', handleAttachFilePaths as unknown as EventListener)
+    return () => window.removeEventListener('craft:attach-file-paths', handleAttachFilePaths as unknown as EventListener)
+  }, [appendAttachment, disabled, sessionId, isFocusedPanel, richInputRef])
+
+  React.useEffect(() => {
+    if (disabled || !sessionId) return
+
+    const pendingPaths = consumePendingAttachmentsForSession(sessionId)
+    if (pendingPaths.length === 0) return
+
+    let cancelled = false
+
+    const loadPendingAttachments = async () => {
+      setLoadingCount((prev) => prev + pendingPaths.length)
+
+      for (const path of pendingPaths) {
+        if (cancelled) break
+        try {
+          const attachment = await readExistingFileAsAttachment(path)
+          if (!cancelled && attachment) {
+            const added = appendAttachment(attachment)
+            if (added) {
+              toast.success('Attached file', { description: attachment.name })
+            }
+          }
+        } catch (error) {
+          console.error('[FreeFormInput] Failed to consume pending attachment:', path, error)
+          toast.error('Failed to attach file', {
+            description: `${getBaseName(path)}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          })
+        } finally {
+          if (!cancelled) {
+            setLoadingCount((prev) => prev - 1)
+          }
+        }
+      }
+
+      if (!cancelled) {
+        richInputRef.current?.focus()
+      }
+    }
+
+    void loadPendingAttachments()
+    return () => { cancelled = true }
+  }, [appendAttachment, disabled, sessionId, richInputRef])
 
   // Build active commands list for slash command menu
   const activeCommands = React.useMemo(() => {
@@ -1013,7 +1261,7 @@ export function FreeFormInput({
     try {
       const attachment = await readFileAsAttachment(file, overrideName)
       if (attachment) {
-        setAttachments(prev => [...prev, attachment])
+        appendAttachment(attachment)
       }
     } catch (error) {
       console.error('[FreeFormInput] Failed to read file:', error)
@@ -1078,13 +1326,7 @@ export function FreeFormInput({
         const result = reader.result as ArrayBuffer
         // Chunked base64 encoding — btoa + reduce fails on large files (>1MB)
         // due to O(n²) string concatenation and browser string-length limits
-        const bytes = new Uint8Array(result)
-        let binary = ''
-        const chunkSize = 8192
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)))
-        }
-        const base64 = btoa(binary)
+        const base64 = arrayBufferToBase64(result)
 
         let type: FileAttachment['type'] = 'unknown'
         const fileName = overrideName || file.name
@@ -1167,10 +1409,10 @@ export function FreeFormInput({
       text: text,
       size: new Blob([text]).size,
     }
-    setAttachments(prev => [...prev, attachment])
+    appendAttachment(attachment)
     // Focus input after adding attachment
     richInputRef.current?.focus()
-  }, []) // No deps needed - uses ref
+  }, [appendAttachment])
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()

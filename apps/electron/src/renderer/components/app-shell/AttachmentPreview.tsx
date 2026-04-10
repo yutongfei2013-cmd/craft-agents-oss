@@ -70,6 +70,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
     : hasThumbnail
       ? `data:image/png;base64,${attachment.thumbnailBase64}`
       : null
+  const shouldRenderImageBubble = isImage && !!imageSrc
 
   return (
     <div className="relative group shrink-0 select-none">
@@ -90,7 +91,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
         </button>
       )}
 
-      {isImage ? (
+      {shouldRenderImageBubble ? (
         /* IMAGE: Square thumbnail only */
         <div className="h-16 w-16 rounded-[8px] overflow-hidden bg-background shadow-minimal">
           {imageSrc ? (

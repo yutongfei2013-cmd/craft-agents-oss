@@ -3,7 +3,7 @@ import { join, resolve, dirname, parse as parsePath } from 'path'
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
-import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult, type FileSystemEntriesResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
@@ -26,6 +26,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.GENERATE_THUMBNAIL,
   RPC_CHANNELS.fs.SEARCH,
   RPC_CHANNELS.fs.LIST_DIRECTORY,
+  RPC_CHANNELS.fs.LIST_ENTRIES,
 ] as const
 
 export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -137,17 +138,18 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       const attachment = await readFileAttachment(safePath)
       if (!attachment) return null
 
-      // Generate thumbnail for image preview
-      // Only works for image formats the processor supports — PDFs/Office files get icon fallback
-      try {
-        const thumbBuffer = await deps.platform.imageProcessor.process(safePath, {
-          resize: { width: 200, height: 200 },
-          format: 'png',
-        })
-        ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
-      } catch (thumbError) {
-        // Thumbnail generation failed (non-image file or corrupt) — icon fallback
-        deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
+      // Keep file-path attachments deterministic: only image files get thumbnail previews.
+      // Text/PDF/Office attachments should fall back to the standard file card in the input UI.
+      if (attachment.type === 'image') {
+        try {
+          const thumbBuffer = await deps.platform.imageProcessor.process(safePath, {
+            resize: { width: 200, height: 200 },
+            format: 'png',
+          })
+          ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
+        } catch (thumbError) {
+          deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
+        }
       }
 
       return attachment
@@ -556,5 +558,129 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       totalEntries,
       entries,
     } satisfies DirectoryListingResult
+  })
+
+  // List files and directories in a given path for the project file explorer.
+  // Hidden entries and heavyweight build directories are skipped for usability.
+  server.handle(RPC_CHANNELS.fs.LIST_ENTRIES, async (_ctx, dirPath: string) => {
+    if (dirPath === '~' || dirPath.startsWith('~/')) {
+      dirPath = dirPath === '~' ? homedir() : join(homedir(), dirPath.slice(2))
+    }
+
+    const pathCheck = validatePathFormat(dirPath)
+    if (!pathCheck.valid) {
+      throw new Error(pathCheck.reason!)
+    }
+
+    const resolved = resolve(dirPath)
+    const raw = await readdir(resolved, { withFileTypes: true })
+
+    const SKIP_NAMES = new Set([
+      '.git',
+      '.svn',
+      '.hg',
+      'node_modules',
+      '.next',
+      '.nuxt',
+      '.turbo',
+      '.cache',
+      '__pycache__',
+      'dist',
+      'build',
+      'coverage',
+      'out',
+    ])
+
+    const entries: FileSystemEntriesResult['entries'] = []
+    for (const entry of raw) {
+      if (entry.name.startsWith('.') || SKIP_NAMES.has(entry.name)) {
+        continue
+      }
+
+      const fullPath = join(resolved, entry.name)
+      const isSymlink = entry.isSymbolicLink()
+
+      if (entry.isDirectory()) {
+        entries.push({
+          name: entry.name,
+          path: fullPath,
+          type: 'directory',
+          isSymlink: false,
+        })
+        continue
+      }
+
+      if (entry.isFile()) {
+        let size: number | undefined
+        try {
+          size = (await stat(fullPath)).size
+        } catch {
+          size = undefined
+        }
+        entries.push({
+          name: entry.name,
+          path: fullPath,
+          type: 'file',
+          size,
+          isSymlink: false,
+        })
+        continue
+      }
+
+      if (isSymlink) {
+        try {
+          const target = await stat(fullPath)
+          if (target.isDirectory()) {
+            entries.push({
+              name: entry.name,
+              path: fullPath,
+              type: 'directory',
+              isSymlink: true,
+            })
+          } else if (target.isFile()) {
+            entries.push({
+              name: entry.name,
+              path: fullPath,
+              type: 'file',
+              size: target.size,
+              isSymlink: true,
+            })
+          }
+        } catch {
+          // Broken symlink — skip silently
+        }
+      }
+    }
+
+    entries.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
+
+    const totalEntries = entries.length
+    const truncated = totalEntries > 1000
+    if (truncated) entries.length = 1000
+
+    const parentPath = resolved === parsePath(resolved).root ? null : dirname(resolved)
+
+    const breadcrumbs: Array<{ name: string; path: string }> = []
+    let current = resolved
+    while (true) {
+      const parsed = parsePath(current)
+      const name = parsed.base || parsed.root
+      breadcrumbs.unshift({ name, path: current })
+      if (current === parsed.root) break
+      current = dirname(current)
+    }
+
+    return {
+      currentPath: resolved,
+      parentPath,
+      breadcrumbs,
+      platform: process.platform as FileSystemEntriesResult['platform'],
+      truncated,
+      totalEntries,
+      entries,
+    } satisfies FileSystemEntriesResult
   })
 }

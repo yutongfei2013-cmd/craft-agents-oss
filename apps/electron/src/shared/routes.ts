@@ -182,6 +182,12 @@ export const routes = {
       subpage
         ? `settings/${subpage}` as const
         : 'settings' as const,
+
+    /** Files view (project files navigator) */
+    files: (filePath?: string) =>
+      filePath
+        ? `files/file/${encodeURIComponent(filePath)}` as const
+        : 'files' as const,
   },
 } as const
 

@@ -69,6 +69,7 @@ import {
 } from "@/components/ui/collapsible"
 import { SessionList, type ChatGroupingMode } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
+import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel"
 import { PanelStackContainer } from "./PanelStackContainer"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar } from "./LeftSidebar"
@@ -110,6 +111,7 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isAutomationsNavigation,
+  isFilesNavigation,
   type NavigationState,
 } from "@/contexts/NavigationContext"
 import type { SettingsSubpage } from "../../../shared/types"
@@ -1569,6 +1571,7 @@ function AppShellContent({
     enabledSources: sources,
     skills,
     activeSessionWorkingDirectory,
+    activeTargetSessionId: effectiveSessionId,
     labels: displayLabelConfigs,
     onSessionLabelsChange: handleSessionLabelsChange,
     enabledModes,
@@ -1588,7 +1591,7 @@ function AppShellContent({
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
-  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
+  }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, effectiveSessionId, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1689,6 +1692,10 @@ function AppShellContent({
   // Handler for skills view
   const handleSkillsClick = useCallback(() => {
     navigate(routes.view.skills())
+  }, [])
+
+  const handleFilesClick = useCallback(() => {
+    navigate(routes.view.files())
   }, [])
 
   // Handlers for automations view
@@ -1948,15 +1955,16 @@ function AppShellContent({
     }
     flattenTree(labelTree)
 
-    // 3. Sources, Skills, Settings
+    // 3. Sources, Files, Skills, Settings
     result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
+    result.push({ id: 'nav:files', type: 'nav', action: handleFilesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleFilesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2073,6 +2081,11 @@ function AppShellContent({
     // Skills navigator
     if (isSkillsNavigation(navState)) {
       return 'All Skills'
+    }
+
+    // Files navigator
+    if (isFilesNavigation(navState)) {
+      return 'Files'
     }
 
     // Automations navigator
@@ -2396,6 +2409,13 @@ function AppShellContent({
                           },
                         },
                       ],
+                    },
+                    {
+                      id: "nav:files",
+                      title: "Files",
+                      icon: FolderOpen,
+                      variant: isFilesNavigation(navState) ? "default" : "ghost",
+                      onClick: handleFilesClick,
                     },
                     {
                       id: "nav:skills",
@@ -3137,6 +3157,14 @@ function AppShellContent({
                 onSkillClick={handleSkillSelect}
                 onDeleteSkill={handleDeleteSkill}
                 selectedSkillSlug={isSkillsNavigation(navState) && navState.details?.type === 'skill' ? navState.details.skillSlug : null}
+              />
+            )}
+            {isFilesNavigation(navState) && (
+              <WorkspaceFilesPanel
+                rootPath={activeSessionWorkingDirectory ?? activeWorkspace?.rootPath}
+                selectedFilePath={navState.details?.filePath ?? null}
+                targetSessionId={effectiveSessionId}
+                onFileSelect={(filePath) => navigate(routes.view.files(filePath))}
               />
             )}
             {isAutomationsNavigation(navState) && (

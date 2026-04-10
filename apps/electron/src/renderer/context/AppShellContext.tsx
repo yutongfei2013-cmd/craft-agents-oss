@@ -57,6 +57,8 @@ export interface AppShellContextType {
   skills?: LoadedSkill[]
   /** Working directory of the active session — needed for project-level skill resolution */
   activeSessionWorkingDirectory?: string
+  /** Target session for attach/focus actions initiated outside the chat page */
+  activeTargetSessionId?: string | null
   /** All label configs (tree) for label menu and badge display */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
   /** Callback when session labels change */
